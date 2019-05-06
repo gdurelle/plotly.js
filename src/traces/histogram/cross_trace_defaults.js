@@ -13,49 +13,81 @@ var axisIds = require('../../plots/cartesian/axis_ids');
 
 var traceIs = require('../../registry').traceIs;
 var handleGroupingDefaults = require('../bar/defaults').handleGroupingDefaults;
-var attributes = require('./attributes');
 
 var nestedProperty = Lib.nestedProperty;
 
-var BINATTRS = {
-    x: [
-        {aStr: 'xbins.start', name: 'start'},
-        {aStr: 'xbins.end', name: 'end'},
-        {aStr: 'xbins.size', name: 'size'},
-        {aStr: 'nbinsx', name: 'nbins'}
-    ],
-    y: [
-        {aStr: 'ybins.start', name: 'start'},
-        {aStr: 'ybins.end', name: 'end'},
-        {aStr: 'ybins.size', name: 'size'},
-        {aStr: 'nbinsy', name: 'nbins'}
-    ]
-};
+var BINATTRS = [
+    {aStr: {x: 'xbins.start', y: 'ybins.start'}, name: 'start'},
+    {aStr: {x: 'xbins.end', y: 'ybins.end'}, name: 'end'},
+    {aStr: {x: 'xbins.size', y: 'xbins.size'}, name: 'size'},
+    {aStr: {x: 'nbinsx', y: 'nbinsy'}, name: 'nbins'}
+];
+
+var BINDIRECTIONS = ['x', 'y'];
 
 // handle bin attrs and relink auto-determined values so fullData is complete
 module.exports = function crossTraceDefaults(fullData, fullLayout) {
     var allBinOpts = fullLayout._histogramBinOpts = {};
+    // var alignmentOpts = fullLayout._alignmentOpts || {};
     var isOverlay = fullLayout.barmode === 'overlay';
 
     var histTraces = [];
     var mustMatchTracesLookup = {};
     var otherTracesList = [];
-    var traces;
 
-    var traceOut, binDir, binOpts, groupName;
+    var traceOut, traces, groupName, binDir;
     var i, j, k;
 
     function coerce(attr, dflt) {
-        return Lib.coerce(traceOut._input, traceOut, attributes, attr, dflt);
+        return Lib.coerce(traceOut._input, traceOut, traceOut._module.attributes, attr, dflt);
     }
 
-    function orientation2binDir() {
+    function orientation2binDir(traceOut) {
         return traceOut.orientation === 'v' ? 'x' : 'y';
     }
 
-    function getAxisType() {
+    function getAxisType(traceOut, binDir) {
         var ax = axisIds.getFromTrace({_fullLayout: fullLayout}, traceOut, binDir);
         return ax.type;
+    }
+
+    function fillBinOpts(traceOut, groupName, binDir) {
+        // N.B. group traces that don't have a bingroup with themselves
+        var fallbackGroupName = traceOut.uid + '__' + binDir;
+        if(!groupName) groupName = fallbackGroupName;
+
+        var axType = getAxisType(traceOut, binDir);
+        var binOpts = allBinOpts[groupName];
+
+        // TODO probably should prohibit bingroup for traces using
+        // different calendar
+
+        if(binOpts) {
+            if(axType === binOpts.axType) {
+                binOpts.traces.push(traceOut);
+                binOpts.dirs.push(binDir);
+            } else {
+                groupName = fallbackGroupName;
+                allBinOpts[groupName] = {
+                    traces: [traceOut],
+                    dirs: [binDir],
+                    axType: axType
+                };
+                Lib.warn([
+                    'Attempted to group the bins of trace', traceOut.index,
+                    'set on a', 'type:' + axType, 'axis',
+                    'with bins on', 'type:' + binOpts.axType, 'axis.'
+                ].join(' '));
+            }
+        } else {
+            binOpts = allBinOpts[groupName] = {
+                traces: [traceOut],
+                dirs: [binDir],
+                axType: axType
+            };
+        }
+
+        traceOut['_' + binDir + 'bingroup'] = groupName;
     }
 
     for(i = 0; i < fullData.length; i++) {
@@ -68,6 +100,8 @@ module.exports = function crossTraceDefaults(fullData, fullLayout) {
             // https://github.com/plotly/plotly.js/issues/749
             delete traceOut._autoBinFinished;
 
+            // N.B. need to coerce *alignmentgroup* before *bingroup*, as traces
+            // in same alignmentgroup "have to match"
             if(!traceIs(traceOut, '2dMap')) {
                 handleGroupingDefaults(traceOut._input, traceOut, fullLayout, coerce);
             }
@@ -77,6 +111,10 @@ module.exports = function crossTraceDefaults(fullData, fullLayout) {
     // Look for traces that "have to match", that is:
     // - 1d histogram traces on the same subplot with same orientation under barmode:stack,
     // - 1d histogram traces on the same subplot with same orientation under barmode:group
+    // - 1d histogram traces on the same position axis with the same orientation
+    //   and the same *alignmentgroup* (coerced under barmode:group)
+    // - Once `stackgroup` gets implemented (see https://github.com/plotly/plotly.js/issues/3614),
+    //   traces within the same stackgroup will also "have to match"
     for(i = 0; i < histTraces.length; i++) {
         traceOut = histTraces[i];
 
@@ -84,17 +122,19 @@ module.exports = function crossTraceDefaults(fullData, fullLayout) {
             groupName = (
                 axisIds.getAxisGroup(fullLayout, traceOut.xaxis) +
                 axisIds.getAxisGroup(fullLayout, traceOut.yaxis) +
-                orientation2binDir()
+                orientation2binDir(traceOut)
             );
 
-            if(!mustMatchTracesLookup[groupName]) mustMatchTracesLookup[groupName] = [];
+            if(!mustMatchTracesLookup[groupName]) {
+                mustMatchTracesLookup[groupName] = [];
+            }
             mustMatchTracesLookup[groupName].push(traceOut);
         } else {
             otherTracesList.push(traceOut);
         }
     }
 
-    // setup binOpts for traces that have to match,
+    // Setup binOpts for traces that have to match,
     // if the traces have a valid bingroup, use that
     // if not use axis+binDir groupName
     for(groupName in mustMatchTracesLookup) {
@@ -127,112 +167,85 @@ module.exports = function crossTraceDefaults(fullData, fullLayout) {
                 ].join(' '));
             }
             traceOut.bingroup = groupName;
-        }
 
-        binDir = orientation2binDir();
-        allBinOpts[groupName] = {
-            traces: traces,
-            binDir: binDir,
-            axType: getAxisType()
-        };
+            // N.B. no need to worry about 2dMap case
+            // (where both bin direction are set in each trace)
+            // as 2dMap trace never "have to match"
+            fillBinOpts(traceOut, groupName, orientation2binDir(traceOut));
+        }
     }
 
     // setup binOpts for traces that can but don't have to match,
     // notice that these traces can be matched with traces that have to match
     for(i = 0; i < otherTracesList.length; i++) {
         traceOut = otherTracesList[i];
+        var binGroup = coerce('bingroup');
 
-        var binDirections = traceIs(traceOut, '2dMap') ?
-            ['x', 'y'] :
-            [orientation2binDir()];
-
-        for(k = 0; k < binDirections.length; k++) {
-            binDir = binDirections[k];
-            groupName = coerce('bingroup');
-
-            // N.B. group traces that don't have a bingroup with themselves
-            // using trace uid and bin direction
-            var fallbackGroupName = traceOut.uid + '__' + binDir;
-            if(!groupName) groupName = fallbackGroupName;
-
-            var axType = getAxisType();
-            binOpts = allBinOpts[groupName];
-
-            if(binOpts) {
-                if(axType === binOpts.axType) {
-                    binOpts.traces.push(traceOut);
-                } else {
-                    allBinOpts[fallbackGroupName] = {
-                        traces: [traceOut],
-                        binDir: binDir,
-                        axType: axType
-                    };
-                    Lib.warn([
-                        'Attempted to group the bins of trace', traceOut.index,
-                        'set on a', 'type:' + axType, 'axis',
-                        'with bins on', 'type:' + binOpts.axType, 'axis.'
-                    ].join(' '));
-                }
-            } else {
-                binOpts = allBinOpts[groupName] = {
-                    traces: [traceOut],
-                    binDir: binDir,
-                    axType: axType
-                };
+        if(traceIs(traceOut, '2dMap')) {
+            for(k = 0; k < 2; k++) {
+                binDir = BINDIRECTIONS[k];
+                var binGroupInDirDflt;
+                if(binGroup) binGroupInDirDflt = binGroup + '__' + binDir;
+                var binGroupInDir = coerce(binDir + 'bingroup', binGroupInDirDflt);
+                fillBinOpts(traceOut, binGroupInDir, binDir);
             }
+        } else {
+            fillBinOpts(traceOut, binGroup, orientation2binDir(traceOut));
         }
     }
 
+    // coerce bin attrs!
     for(groupName in allBinOpts) {
-        binOpts = allBinOpts[groupName];
-        binDir = binOpts.binDir;
+        var binOpts = allBinOpts[groupName];
         traces = binOpts.traces;
 
-        // setup trace-to-binOpts reference used during calc
-        for(i = 0; i < traces.length; i++) {
-            traces[i]['_groupName' + binDir] = groupName;
-        }
-
-        var attrs = BINATTRS[binDir];
-        var autoVals;
-
-        for(j = 0; j < attrs.length; j++) {
-            var attrSpec = attrs[j];
+        for(j = 0; j < BINATTRS.length; j++) {
+            var attrSpec = BINATTRS[j];
             var attr = attrSpec.name;
 
             // nbins(x|y) is moot if we have a size. This depends on
             // nbins coming after size in binAttrs.
             if(attr === 'nbins' && binOpts.sizeFound) continue;
 
-            var aStr = attrSpec.aStr;
-            for(i = 0; i < traces.length; i++) {
-                traceOut = traces[i];
-                if(nestedProperty(traceOut._input, aStr).get() !== undefined) {
-                    binOpts[attr] = coerce(aStr);
-                    binOpts[attr + 'Found'] = true;
-                    break;
-                }
+            for(k = 0; k < 2; k++) {
+                binDir = BINDIRECTIONS[k];
+                var aStr = attrSpec.aStr[binDir];
+                var autoVals;
 
-                autoVals = (traceOut._autoBin || {})[binDir] || {};
-                if(autoVals[attr]) {
-                    // if this is the *first* autoval
-                    nestedProperty(traceOut, aStr).set(autoVals[attr]);
-                }
-            }
-            // start and end we need to coerce anyway, after having collected the
-            // first of each into binOpts, in case a trace wants to restrict its
-            // data to a certain range
-            if(attr === 'start' || attr === 'end') {
-                for(; i < traces.length; i++) {
+                for(i = 0; i < traces.length; i++) {
                     traceOut = traces[i];
-                    autoVals = (traceOut._autoBin || {})[binDir] || {};
-                    coerce(aStr, autoVals[attr]);
-                }
-            }
 
-            if(attr === 'nbins' && !binOpts.sizeFound && !binOpts.nbinsFound) {
-                traceOut = traces[0];
-                binOpts[attr] = coerce(aStr);
+                    if(!traceOut['_' + binDir + 'bingroup']) continue;
+
+                    if(nestedProperty(traceOut._input, aStr).get() !== undefined) {
+                        binOpts[attr] = coerce(aStr);
+                        binOpts[attr + 'Found'] = true;
+                        break;
+                    }
+
+                    autoVals = (traceOut._autoBin || {})[binDir] || {};
+                    if(autoVals[attr]) {
+                        // if this is the *first* autoval
+                        nestedProperty(traceOut, aStr).set(autoVals[attr]);
+                    }
+                }
+                // start and end we need to coerce anyway, after having collected the
+                // first of each into binOpts, in case a trace wants to restrict its
+                // data to a certain range
+                if(attr === 'start' || attr === 'end') {
+                    for(; i < traces.length; i++) {
+                        traceOut = traces[i];
+                        if(traceOut['_' + binDir + 'bingroup']) {
+                            autoVals = (traceOut._autoBin || {})[binDir] || {};
+                            coerce(aStr, autoVals[attr]);
+                        }
+                    }
+                }
+
+                if(attr === 'nbins' && !binOpts.sizeFound && !binOpts.nbinsFound) {
+                    traceOut = traces[0];
+                    binOpts[attr] = coerce(aStr);
+                }
             }
         }
     }

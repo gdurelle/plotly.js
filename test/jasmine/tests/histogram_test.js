@@ -221,8 +221,8 @@ describe('Test histogram', function() {
                 traces.forEach(function(t, i) {
                     expect(t.index)
                         .toBe(expi[1][i], 'tracks same traces[' + i + ']|' + msg);
-                    expect(t['_groupName' + binOpts.binDir])
-                        .toBe(k, '_groupName(x|y) key in trace' + i + '| ' + msg);
+                    // expect(t['_groupName' + binOpts.binDir])
+                    //     .toBe(k, '_groupName(x|y) key in trace' + i + '| ' + msg);
                 });
             });
 
@@ -371,7 +371,9 @@ describe('Test histogram', function() {
             };
             supplyAllDefaults(gd);
             _assert('N.B. histogram2d* indices show up twice, once for x-bins, once for y-bins', [
-                ['1', [0, 1, 2, 2, 3, 3]],
+                ['1', [0, 1]],
+                ['1__x', [2, 3]],
+                ['1__y', [2, 3]]
             ]);
         });
 
@@ -425,7 +427,7 @@ describe('Test histogram', function() {
                     {bingroup: '1', type: 'histogram', y: [2], xaxis: 'x2', yaxis: 'y2'},
                     // this one does not have to match either
                     // (it's a histogram2d* traces), but it can be grouped
-                    {bingroup: '1', type: 'histogram2d', x: [3], y: [3]}
+                    {xbingroup: '1', ybingroup: '1', type: 'histogram2d', x: [3], y: [3]}
                 ],
                 layout: {}
             };

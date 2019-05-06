@@ -30,6 +30,8 @@ module.exports = extendFlat({
     autobiny: histogram2dAttrs.autobiny,
 
     bingroup: histogram2dAttrs.bingroup,
+    xbingroup: histogram2dAttrs.xbingroup,
+    ybingroup: histogram2dAttrs.ybingroup,
 
     autocontour: contourAttrs.autocontour,
     ncontours: contourAttrs.ncontours,

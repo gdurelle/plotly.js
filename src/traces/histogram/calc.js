@@ -208,7 +208,8 @@ function calc(gd, trace) {
 function calcAllAutoBins(gd, trace, pa, mainData, _overlayEdgeCase) {
     var binAttr = mainData + 'bins';
     var fullLayout = gd._fullLayout;
-    var binOpts = fullLayout._histogramBinOpts[trace['_groupName' + mainData]];
+    var groupName = trace['_' + mainData + 'bingroup'];
+    var binOpts = fullLayout._histogramBinOpts[groupName];
     var is2dMap = Registry.traceIs(trace, '2dMap');
     var isOverlay = fullLayout.barmode === 'overlay';
     var i, traces, tracei, calendar, pos0, autoVals, cumulativeSpec;
@@ -237,8 +238,6 @@ function calcAllAutoBins(gd, trace, pa, mainData, _overlayEdgeCase) {
     } else {
         traces = binOpts.traces;
         var allPos = [];
-        var autoBin = traces[0]._autoBin = {};
-        autoVals = autoBin[binOpts.binDir] = {};
 
         // Note: we're including `legendonly` traces here for autobin purposes,
         // so that showing & hiding from the legend won't affect bins.
@@ -248,10 +247,14 @@ function calcAllAutoBins(gd, trace, pa, mainData, _overlayEdgeCase) {
         var hasHist2dContour = false;
         for(i = 0; i < traces.length; i++) {
             tracei = traces[i];
+
             if(tracei.visible) {
-                pos0 = tracei._pos0 = pa.makeCalcdata(tracei, mainData);
+                var mainDatai = binOpts.dirs[i];
+                pos0 = tracei['_' + mainDatai + 'pos0'] = pa.makeCalcdata(tracei, mainDatai);
+
                 allPos = Lib.concat(allPos, pos0);
                 delete tracei._autoBinFinished;
+
                 if(trace.visible === true) {
                     if(isFirstVisible) {
                         isFirstVisible = false;
@@ -268,6 +271,9 @@ function calcAllAutoBins(gd, trace, pa, mainData, _overlayEdgeCase) {
 
         calendar = traces[0][mainData + 'calendar'];
         var newBinSpec = Axes.autoBin(allPos, pa, binOpts.nbins, is2dMap, calendar, binOpts.sizeFound && binOpts.size);
+
+        var autoBin = traces[0]._autoBin = {};
+        autoVals = autoBin[binOpts.dirs[0]] = {};
 
         if(hasHist2dContour) {
             // the "true" 2nd argument reverses the tick direction (which we can't
@@ -318,8 +324,8 @@ function calcAllAutoBins(gd, trace, pa, mainData, _overlayEdgeCase) {
         setBound('end', binOpts, newBinSpec);
     }
 
-    pos0 = trace._pos0;
-    delete trace._pos0;
+    pos0 = trace['_' + mainData + 'pos0'];
+    delete trace['_' + mainData + 'pos0'];
 
     // Each trace can specify its own start/end, or if omitted
     // we ensure they're beyond the bounds of this trace's data,
@@ -412,7 +418,7 @@ function handleSingleValueOverlays(gd, trace, pa, mainData, binAttr) {
             // so we can use this result when we get to tracei in the normal
             // course of events, mark it as done and put _pos0 back
             tracei._autoBinFinished = 1;
-            tracei._pos0 = resulti[1];
+            tracei['_' + mainData + 'pos0'] = resulti[1];
 
             if(isSingleValued) {
                 singleValuedTraces.push(tracei);
@@ -426,7 +432,7 @@ function handleSingleValueOverlays(gd, trace, pa, mainData, binAttr) {
     // hunt through pos0 for the first valid value
     var dataVals = new Array(singleValuedTraces.length);
     for(i = 0; i < singleValuedTraces.length; i++) {
-        var pos0 = singleValuedTraces[i]._pos0;
+        var pos0 = singleValuedTraces[i]['_' + mainData + 'pos0'];
         for(var j = 0; j < pos0.length; j++) {
             if(pos0[j] !== undefined) {
                 dataVals[i] = pos0[j];
